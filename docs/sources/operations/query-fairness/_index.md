@@ -1,11 +1,10 @@
 ---
-title: Query fairness within tenants
+title: Ensure query fairness within tenants using actors
 menuTitle: Query fairness
 description: Describes methods for guaranteeing query fairness across multiple actors within a single tenant using the scheduler.
 weight:
 ---
-
-# Query fairness within tenants
+# Ensure query fairness within tenants using actors
 
 Loki uses [shuffle sharding]({{< relref "../shuffle-sharding/_index.md" >}})
 to minimize impact across tenants in case of querier failures or misbehaving
@@ -19,7 +18,7 @@ different users, because they all share the same resources for a tenant.
 In that case, as an operator, you would also want to ensure some sort of query
 fairness across these actors within the tenants. An actor could be a Grafana user,
 a CLI user, or an application accessing the API. To achieve that, Loki
-introduces hierarchical scheduler queues in version 2.9 based on
+introduced hierarchical scheduler queues in version 2.9 based on
 [LID 0003: Query fairness across users within tenants]({{< relref "../../community/lids/0003-QueryFairnessInScheduler.md" >}})
 and they are enabled by default.
 
@@ -95,7 +94,7 @@ curl -s http://localhost:3100/loki/api/v1/query_range?xxx \
 ```
 
 There is a limit to how deep a path and thus the queue tree can be. This is
-controlled by Loki's `-query-scheduler.max-queue-hierarchy-levels` CLI argument
+controlled by the Loki `-query-scheduler.max-queue-hierarchy-levels` CLI argument
 or its respective YAML configuration block:
 
 ```yaml

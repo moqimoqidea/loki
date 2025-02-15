@@ -13,17 +13,19 @@ import (
 	"github.com/go-kit/log/level"
 	"go.etcd.io/bbolt"
 
-	"github.com/grafana/loki/pkg/chunkenc"
-	"github.com/grafana/loki/pkg/storage/chunk/client/local"
-	"github.com/grafana/loki/pkg/storage/stores/series/index"
-	"github.com/grafana/loki/pkg/storage/stores/shipper/indexshipper/storage"
-	shipper_util "github.com/grafana/loki/pkg/storage/stores/shipper/indexshipper/util"
-	util_log "github.com/grafana/loki/pkg/util/log"
+	"github.com/grafana/loki/v3/pkg/compression"
+	"github.com/grafana/loki/v3/pkg/storage/chunk/client/local"
+	"github.com/grafana/loki/v3/pkg/storage/stores/series/index"
+	"github.com/grafana/loki/v3/pkg/storage/stores/shipper/indexshipper/storage"
+	shipper_util "github.com/grafana/loki/v3/pkg/storage/stores/shipper/indexshipper/util"
+	util_log "github.com/grafana/loki/v3/pkg/util/log"
 )
 
 type deleteRequestsTable struct {
 	indexStorageClient storage.Client
 	dbPath             string
+	updatedAt          time.Time
+	uploadedAt         time.Time
 
 	boltdbIndexClient *local.BoltIndexClient
 	db                *bbolt.DB
@@ -31,7 +33,10 @@ type deleteRequestsTable struct {
 	wg                sync.WaitGroup
 }
 
-const deleteRequestsIndexFileName = DeleteRequestsTableName + ".gz"
+const (
+	deleteRequestsIndexFileName  = DeleteRequestsTableName + ".gz"
+	deleteRequestsSQLiteFileName = DeleteRequestsTableName + ".sqlite.gz"
+)
 
 func newDeleteRequestsTable(workingDirectory string, indexStorageClient storage.Client) (index.Client, error) {
 	dbPath := filepath.Join(workingDirectory, DeleteRequestsTableName, DeleteRequestsTableName)
@@ -98,6 +103,10 @@ func (t *deleteRequestsTable) loop() {
 }
 
 func (t *deleteRequestsTable) uploadFile() error {
+	if t.uploadedAt.After(t.updatedAt) {
+		level.Debug(util_log.Logger).Log("msg", "skipping uploading delete requests db since there have been no updates to the table since last upload")
+		return nil
+	}
 	level.Debug(util_log.Logger).Log("msg", "uploading delete requests db")
 
 	tempFilePath := fmt.Sprintf("%s.%s", t.dbPath, tempFileSuffix)
@@ -117,8 +126,9 @@ func (t *deleteRequestsTable) uploadFile() error {
 	}()
 
 	err = t.db.View(func(tx *bbolt.Tx) (err error) {
-		compressedWriter := chunkenc.Gzip.GetWriter(f)
-		defer chunkenc.Gzip.PutWriter(compressedWriter)
+		gzipPool := compression.GetWriterPool(compression.GZIP)
+		compressedWriter := gzipPool.GetWriter(f)
+		defer gzipPool.PutWriter(compressedWriter)
 
 		defer func() {
 			cerr := compressedWriter.Close()
@@ -143,7 +153,12 @@ func (t *deleteRequestsTable) uploadFile() error {
 		return err
 	}
 
-	return t.indexStorageClient.PutFile(context.Background(), DeleteRequestsTableName, deleteRequestsIndexFileName, f)
+	if err := t.indexStorageClient.PutFile(context.Background(), DeleteRequestsTableName, deleteRequestsIndexFileName, f); err != nil {
+		return err
+	}
+
+	t.uploadedAt = time.Now()
+	return nil
 }
 
 func (t *deleteRequestsTable) Stop() {
@@ -177,6 +192,7 @@ func (t *deleteRequestsTable) BatchWrite(ctx context.Context, batch index.WriteB
 		}
 	}
 
+	t.updatedAt = time.Now()
 	return nil
 }
 
